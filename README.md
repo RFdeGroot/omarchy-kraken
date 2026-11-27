@@ -83,9 +83,11 @@ bin/krakenctl restore
 ## System info screen
 
 The firmware can only draw liquid temperature itself, so **System info** is drawn by
-`krakenctl` and uploaded to the display as a static image. The background service checks
-every 2 s and uploads only when a shown value changes: within 10 s for a change of 2 °C or
-more, and at most once a minute for 1 °C wobble. An upload takes under a second. Whether the
+`krakenctl` and uploaded to the display as a one-frame GIF (about 13 KB; a static image would
+take 1.6 MB of the LCD's 24 MB, and liquidctl wipes the memory, flashing the liquid screen,
+once it fills up). The background service checks every 2 s and uploads only when a shown
+value changes: within 10 s for a change of 2 °C or more, and at most once a minute for 1 °C
+wobble. An upload takes under a second. Whether the
 cooler keeps uploads in RAM or flash isn't documented, which is why updates are kept sparse;
 the `INFO_*` constants in `bin/krakenctl` tune this.
 

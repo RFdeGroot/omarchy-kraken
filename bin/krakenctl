@@ -28,8 +28,12 @@ RESTORED_MARKER = RUNTIME_DIR / "omarchy-kraken-restored"
 
 DEFAULT_STATE = {"profile": "auto", "screen": {"mode": "liquid"}}
 # The firmware can only draw liquid temperature itself, so the "info" screen is
-# rendered here and uploaded as a static image whenever a shown value changes.
-INFO_IMAGE = RUNTIME_DIR / "omarchy-kraken-info.png"
+# rendered here and uploaded whenever a shown value changes. It goes up as a
+# one-frame GIF: liquidctl stores static images uncompressed (1.6 MB at 640x640)
+# in a fresh LCD memory bucket each time, and when the 24 MB fill up it wipes
+# them all, flashing the liquid screen. A GIF of this screen is ~13 KB, so once
+# the 16 buckets are in use liquidctl just alternates between two of them.
+INFO_IMAGE = RUNTIME_DIR / "omarchy-kraken-info.gif"
 INFO_POLL_SEC = 2
 INFO_MIN_UPLOAD_SEC = 10  # at most one upload per this many seconds
 # Readings wobble by a degree all the time, so a 1 °C change waits this long;
@@ -318,7 +322,8 @@ def render_info(values, target, lcd_size):
         image = image.resize(lcd_size, Image.Resampling.LANCZOS)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(target.name + ".tmp")
-    image.save(tmp, format="PNG")
+    # Few colours on black: an exact palette, no dithering, looks the same as the original.
+    image.quantize(colors=256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE).save(tmp, format="GIF")
     os.replace(tmp, target)
 
 
@@ -328,7 +333,7 @@ def upload_info(values):
     if model is None:
         raise KrakenError("no supported Kraken cooler found")
     render_info(values, INFO_IMAGE, model["lcd"])
-    return liquidctl("set", "lcd", "screen", "static", str(INFO_IMAGE),
+    return liquidctl("set", "lcd", "screen", "gif", str(INFO_IMAGE),
                      still_wanted=lambda: load_state()["screen"]["mode"] == "info")
 
 
