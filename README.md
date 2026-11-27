@@ -5,7 +5,8 @@ An Omarchy bar widget for NZXT Kraken Z (Z53, Z63, Z73) and Kraken 2023 Elite co
 
 - Fan icon in the bar. Click it for live liquid, CPU and GPU temperatures and fan speeds.
 - Cooling profiles: Silent, Auto, Performance.
-- Change the image or GIF on the cooler's display, or go back to the temperature readout.
+- Change the image or GIF on the cooler's display, go back to the temperature readout, or
+  show live CPU, GPU and liquid temperatures.
 - Saved settings are reapplied at login and after resume.
 
 ## Install
@@ -75,8 +76,22 @@ bin/krakenctl profile silent        # silent | auto | performance
 bin/krakenctl screen pick           # open the file chooser
 bin/krakenctl screen set ~/cat.gif
 bin/krakenctl screen liquid
+bin/krakenctl screen info           # live CPU/GPU/liquid temperatures
 bin/krakenctl restore
 ```
+
+## System info screen
+
+The firmware can only draw liquid temperature itself, so **System info** is drawn by
+`krakenctl` and uploaded to the display as a static image. The background service checks
+every 2 s and uploads only when a shown value changes: within 10 s for a change of 2 °C or
+more, and at most once a minute for 1 °C wobble. An upload takes under a second. Whether the
+cooler keeps uploads in RAM or flash isn't documented, which is why updates are kept sparse;
+the `INFO_*` constants in `bin/krakenctl` tune this.
+
+`INFO_LAYOUT` picks the design: `gauge` (default) shows a large CPU temperature, `omarchy`
+draws the Omarchy logo mark with the CPU temperature inside. Both have a ring around the edge
+that fills and changes colour with CPU temperature.
 
 ## Notes
 

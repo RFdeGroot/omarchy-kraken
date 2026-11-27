@@ -12,6 +12,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -26,6 +27,38 @@ RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
 RESTORED_MARKER = RUNTIME_DIR / "omarchy-kraken-restored"
 
 DEFAULT_STATE = {"profile": "auto", "screen": {"mode": "liquid"}}
+# The firmware can only draw liquid temperature itself, so the "info" screen is
+# rendered here and uploaded as a static image whenever a shown value changes.
+INFO_IMAGE = RUNTIME_DIR / "omarchy-kraken-info.png"
+INFO_POLL_SEC = 2
+INFO_MIN_UPLOAD_SEC = 10  # at most one upload per this many seconds
+# Readings wobble by a degree all the time, so a 1 °C change waits this long;
+# bigger changes go out at the next allowed upload.
+INFO_SMALL_CHANGE_SEC = 60
+INFO_BIG_CHANGE = 2  # °C
+INFO_CANVAS = (640, 640)  # drawn at this size, then scaled to the cooler's LCD
+INFO_FONT = "JetBrainsMono Nerd Font"
+INFO_ARC_RANGE = (30, 90)  # CPU °C mapped onto the ring, empty to full
+INFO_LAYOUT = "gauge"  # "gauge" (big CPU number) or "omarchy" (Omarchy logo with CPU inside)
+# The Omarchy logo mark (omarchy.org/brand) on its 15×15 grid.
+OMARCHY_MARK = (
+    "###############",
+    "#......#......#",
+    "#.######...##.#",
+    "#.#.........#.#",
+    "#.#.........#.#",
+    "#.#.........#.#",
+    "#.#.........#.#",
+    "###.........#.#",
+    "#.#.........#.#",
+    "#.#.........#.#",
+    "#.#.........#.#",
+    "#.#.........#.#",
+    "#.###########.#",
+    "#......#......#",
+    "########.######",
+)
+OMARCHY_GREEN = (158, 206, 106)
 LCD_MEMORY_LIMIT = 24_000_000  # bytes liquidctl accepts for one GIF
 NZXT_VENDOR_ID = "1e71"
 # Supported coolers by USB product id: the liquidctl description to match and
@@ -57,7 +90,7 @@ def load_profiles():
 def valid_screen(screen):
     if not isinstance(screen, dict):
         return False
-    if screen.get("mode") == "liquid":
+    if screen.get("mode") in ("liquid", "info"):
         return True
     return screen.get("mode") in ("static", "gif") and isinstance(screen.get("path"), str)
 
@@ -86,7 +119,9 @@ def save_state(**changes):
     os.replace(tmp, STATE_FILE)
 
 
-def liquidctl(*args):
+def liquidctl(*args, still_wanted=None):
+    """Run one liquidctl command. With `still_wanted`, skip it (returning False) if
+    that check fails once the device lock is held."""
     model = detect_model()
     if model is None:
         raise KrakenError("no supported Kraken cooler found")
@@ -97,6 +132,8 @@ def liquidctl(*args):
     with open(LOCK_FILE, "w") as lock:
         # The device can't take overlapping commands, and uploads take seconds.
         fcntl.flock(lock, fcntl.LOCK_EX)
+        if still_wanted is not None and not still_wanted():
+            return False
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=LIQUIDCTL_TIMEOUT_SEC)
         except FileNotFoundError:
@@ -107,6 +144,7 @@ def liquidctl(*args):
     errors = [line for line in result.stderr.splitlines() if line.startswith("ERROR")]
     if result.returncode != 0 or errors:
         raise KrakenError(errors[-1] if errors else f"liquidctl failed: {' '.join(args)}")
+    return True
 
 
 def apply_profile(name):
@@ -121,6 +159,12 @@ def apply_profile(name):
 def apply_screen(screen):
     if screen["mode"] == "liquid":
         liquidctl("set", "lcd", "screen", "liquid")
+        return
+    if screen["mode"] == "info":
+        sensors = read_sensors()
+        if sensors is None:
+            raise KrakenError("cooler sensors not available")
+        upload_info(info_values(sensors))
         return
     if not Path(screen["path"]).is_file():
         raise KrakenError(f"saved image is missing: {screen['path']}")
@@ -185,9 +229,144 @@ def remove_unused_images(keep=None):
 
 def set_image(source):
     screen = prepare_image(source)
-    apply_screen(screen)
+    # Saved before applying, so the info screen loop sees the switch and stops uploading.
     save_state(screen=screen)
+    apply_screen(screen)
     remove_unused_images(keep=screen["path"])
+
+
+def info_values(sensors):
+    """The whole-degree readings the info screen shows; a new image is only sent when they change."""
+    whole = lambda value: None if value is None else round(value)
+    return {"cpu": whole(sensors["cpu"]), "gpu": whole(sensors["gpu"]), "liquid": whole(sensors["liquid"])}
+
+
+def font_file(style):
+    try:
+        result = subprocess.run(["fc-match", "-f", "%{file}", f"{INFO_FONT}:{style}"],
+                                capture_output=True, text=True, timeout=5)
+        return result.stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def temperature_color(celsius):
+    if celsius is None or celsius < 60:
+        return (80, 200, 120)
+    if celsius < 75:
+        return (240, 190, 50)
+    if celsius < 85:
+        return (255, 140, 0)
+    return (235, 60, 50)
+
+
+def render_info(values, target, lcd_size):
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        raise KrakenError("python-pillow is not installed (sudo pacman -S python-pillow)")
+
+    def font(style, size):
+        path = font_file(style)
+        return ImageFont.truetype(path, size) if path else ImageFont.load_default(size)
+
+    width, height = INFO_CANVAS
+    center = width // 2
+    image = Image.new("RGB", INFO_CANVAS, "black")
+    draw = ImageDraw.Draw(image)
+    text = lambda y, value, face, color: draw.text((center, y), value, font=face, fill=color, anchor="mm")
+    degrees = lambda value: "—" if value is None else f"{value}°"
+
+    # The screen is round: a ring around the edge fills up with CPU temperature.
+    cpu = values["cpu"]
+    low, high = INFO_ARC_RANGE
+    fill = 0 if cpu is None else max(0.0, min(1.0, (cpu - low) / (high - low)))
+    ring = 10 if INFO_LAYOUT == "omarchy" else 18
+    box = (14, 14, width - 14, height - 14)
+    draw.arc(box, 135, 405, fill=(40, 40, 40), width=ring)
+    if fill > 0:
+        draw.arc(box, 135, 135 + 270 * fill, fill=temperature_color(cpu), width=ring)
+
+    if INFO_LAYOUT == "omarchy":
+        # The logo's hollow centre (9×9 cells) holds the CPU temperature.
+        cell = 21
+        side = cell * len(OMARCHY_MARK)
+        left, top = center - side // 2, 92
+        for row, line in enumerate(OMARCHY_MARK):
+            for col, mark in enumerate(line):
+                if mark == "#":
+                    x, y = left + col * cell, top + row * cell
+                    draw.rectangle((x, y, x + cell - 1, y + cell - 1), fill=OMARCHY_GREEN)
+        middle = top + side // 2
+        text(middle - 52, "CPU", font("bold", 34), (150, 150, 150))
+        inner = cell * 9 - 20  # hollow centre, minus a little breathing room
+        size = 92
+        while size > 40 and draw.textlength(degrees(cpu), font=font("bold", size)) > inner:
+            size -= 4
+        text(middle + 18, degrees(cpu), font("bold", size), (255, 255, 255))
+        below = top + side + 52
+        text(below, f"GPU {degrees(values['gpu'])}  ·  LIQ {degrees(values['liquid'])}",
+             font("regular", 40), (200, 200, 200))
+    else:
+        text(165, "CPU", font("bold", 50), (150, 150, 150))
+        text(285, degrees(cpu), font("bold", 180), (255, 255, 255))
+        small = font("regular", 46)
+        text(415, f"GPU {degrees(values['gpu'])}", small, (200, 200, 200))
+        text(480, f"LIQ {degrees(values['liquid'])}", small, (110, 170, 230))
+
+    if tuple(lcd_size) != INFO_CANVAS:
+        image = image.resize(lcd_size, Image.Resampling.LANCZOS)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(target.name + ".tmp")
+    image.save(tmp, format="PNG")
+    os.replace(tmp, target)
+
+
+def upload_info(values):
+    """Render and upload the info screen, unless another screen was chosen meanwhile."""
+    model = detect_model()
+    if model is None:
+        raise KrakenError("no supported Kraken cooler found")
+    render_info(values, INFO_IMAGE, model["lcd"])
+    return liquidctl("set", "lcd", "screen", "static", str(INFO_IMAGE),
+                     still_wanted=lambda: load_state()["screen"]["mode"] == "info")
+
+
+def big_change(old, new):
+    for key, value in new.items():
+        if (value is None) != (old[key] is None):
+            return True
+        if value is not None and abs(value - old[key]) >= INFO_BIG_CHANGE:
+            return True
+    return False
+
+
+def info_loop():
+    """Keep the info screen current: upload when a shown value changes, rate-limited."""
+    shown, last_upload, failing = None, float("-inf"), False
+    while True:
+        time.sleep(INFO_POLL_SEC)
+        if load_state()["screen"]["mode"] != "info":
+            shown = None  # upload straight away when switched back
+            continue
+        sensors = read_sensors()
+        if sensors is None:
+            continue  # cooler asleep or unplugged; restore redraws it when it's back
+        values = info_values(sensors)
+        since = time.monotonic() - last_upload
+        if values == shown or since < INFO_MIN_UPLOAD_SEC:
+            continue
+        if shown is not None and since < INFO_SMALL_CHANGE_SEC and not big_change(shown, values):
+            continue
+        last_upload = time.monotonic()
+        try:
+            if upload_info(values):
+                shown = values
+            failing = False
+        except KrakenError as error:
+            if not failing:  # log once per run of failures, not every poll
+                print(f"info screen update failed: {error}", file=sys.stderr, flush=True)
+            failing = True
 
 
 def restore(attempts=RESTORE_ATTEMPTS):
@@ -337,9 +516,10 @@ def cmd_profile(args):
 
 
 def cmd_screen(args):
-    if args.action == "liquid":
-        apply_screen({"mode": "liquid"})
-        save_state(screen={"mode": "liquid"})
+    if args.action in ("liquid", "info"):
+        # Saved before applying, so the info screen loop sees the switch first.
+        save_state(screen={"mode": args.action})
+        apply_screen({"mode": args.action})
         remove_unused_images()
     elif args.action == "set":
         if not args.path:
@@ -369,6 +549,7 @@ def cmd_watch(_args):
     die_with_parent()  # never outlive the shell, or a restarted one would add a second watcher
     if not RESTORED_MARKER.exists():
         restore_and_report()
+    threading.Thread(target=info_loop, daemon=True).start()
     while True:
         monitor = subprocess.Popen(
             ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.login1",
@@ -388,8 +569,8 @@ def main():
     profile = commands.add_parser("profile", help="apply and remember a cooling profile")
     profile.add_argument("name")
     profile.set_defaults(run=cmd_profile)
-    screen = commands.add_parser("screen", help="change the LCD: pick, set <path>, or liquid")
-    screen.add_argument("action", choices=["pick", "set", "liquid"])
+    screen = commands.add_parser("screen", help="change the LCD: pick, set <path>, liquid, or info")
+    screen.add_argument("action", choices=["pick", "set", "liquid", "info"])
     screen.add_argument("path", nargs="?")
     screen.set_defaults(run=cmd_screen)
     commands.add_parser("restore", help="reapply saved settings").set_defaults(run=cmd_restore)
