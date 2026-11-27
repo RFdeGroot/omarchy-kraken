@@ -37,8 +37,9 @@ INFO_IMAGE = RUNTIME_DIR / "omarchy-kraken-info.gif"
 INFO_POLL_SEC = 2
 INFO_MIN_UPLOAD_SEC = 10  # at most one upload per this many seconds
 # Readings wobble by a degree all the time, so a 1 °C change waits this long;
-# bigger changes go out at the next allowed upload.
-INFO_SMALL_CHANGE_SEC = 60
+# bigger changes go out at the next allowed upload. Every upload makes the LCD
+# blink briefly while it switches images, so this is kept long.
+INFO_SMALL_CHANGE_SEC = 300
 INFO_BIG_CHANGE = 2  # °C
 INFO_CANVAS = (640, 640)  # drawn at this size, then scaled to the cooler's LCD
 INFO_FONT = "JetBrainsMono Nerd Font"
