@@ -92,7 +92,8 @@ cooler keeps uploads in RAM or flash isn't documented, which is why updates are 
 the `INFO_*` constants in `bin/krakenctl` tune this.
 
 `INFO_LAYOUT` picks the design: `gauge` (default) shows a large CPU temperature, `omarchy`
-draws the Omarchy logo mark with the CPU temperature inside. Both have a ring around the edge
+draws the Omarchy logo mark with the CPU temperature inside, in the current theme's accent
+colour (it follows theme changes within seconds). Both have a ring around the edge
 that fills and changes colour with CPU temperature.
 
 ## Notes

@@ -62,7 +62,9 @@ OMARCHY_MARK = (
     "#......#......#",
     "########.######",
 )
-OMARCHY_GREEN = (158, 206, 106)
+OMARCHY_GREEN = (158, 206, 106)  # logo colour when no Omarchy theme can be read
+# The logo wears the current theme's accent colour, like the rest of the desktop.
+THEME_COLORS_FILE = HOME / ".local/state/omarchy/current/theme/colors.toml"
 LCD_MEMORY_LIMIT = 24_000_000  # bytes liquidctl accepts for one GIF
 NZXT_VENDOR_ID = "1e71"
 # Supported coolers by USB product id: the liquidctl description to match and
@@ -239,10 +241,34 @@ def set_image(source):
     remove_unused_images(keep=screen["path"])
 
 
+_accent_cache = {}
+
+
+def theme_accent():
+    """The Omarchy theme's accent colour as "#rrggbb", or None. Only re-resolved when the
+    theme's colors.toml changes, so polling this is just a stat()."""
+    try:
+        stamp = (os.path.realpath(THEME_COLORS_FILE), THEME_COLORS_FILE.stat().st_mtime_ns)
+    except OSError:
+        return None
+    if stamp not in _accent_cache:
+        try:
+            result = subprocess.run(["omarchy-theme-color", "accent"], capture_output=True,
+                                    text=True, timeout=5)
+            value = result.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            value = ""
+        valid = len(value) == 7 and value.startswith("#") and all(c in "0123456789abcdefABCDEF" for c in value[1:])
+        _accent_cache.clear()
+        _accent_cache[stamp] = value.lower() if valid else None
+    return _accent_cache[stamp]
+
+
 def info_values(sensors):
-    """The whole-degree readings the info screen shows; a new image is only sent when they change."""
+    """What the info screen shows; a new image is only sent when this changes."""
     whole = lambda value: None if value is None else round(value)
-    return {"cpu": whole(sensors["cpu"]), "gpu": whole(sensors["gpu"]), "liquid": whole(sensors["liquid"])}
+    return {"cpu": whole(sensors["cpu"]), "gpu": whole(sensors["gpu"]), "liquid": whole(sensors["liquid"]),
+            "accent": theme_accent()}
 
 
 def font_file(style):
@@ -293,6 +319,8 @@ def render_info(values, target, lcd_size):
 
     if INFO_LAYOUT == "omarchy":
         # The logo's hollow centre (9×9 cells) holds the CPU temperature.
+        accent = values.get("accent")
+        logo_color = tuple(int(accent[i:i + 2], 16) for i in (1, 3, 5)) if accent else OMARCHY_GREEN
         cell = 21
         side = cell * len(OMARCHY_MARK)
         left, top = center - side // 2, 92
@@ -300,7 +328,7 @@ def render_info(values, target, lcd_size):
             for col, mark in enumerate(line):
                 if mark == "#":
                     x, y = left + col * cell, top + row * cell
-                    draw.rectangle((x, y, x + cell - 1, y + cell - 1), fill=OMARCHY_GREEN)
+                    draw.rectangle((x, y, x + cell - 1, y + cell - 1), fill=logo_color)
         middle = top + side // 2
         text(middle - 52, "CPU", font("bold", 34), (150, 150, 150))
         inner = cell * 9 - 20  # hollow centre, minus a little breathing room
@@ -339,9 +367,11 @@ def upload_info(values):
 
 def big_change(old, new):
     for key, value in new.items():
-        if (value is None) != (old[key] is None):
-            return True
-        if value is not None and abs(value - old[key]) >= INFO_BIG_CHANGE:
+        before = old.get(key)
+        if isinstance(value, int) and isinstance(before, int):
+            if abs(value - before) >= INFO_BIG_CHANGE:
+                return True
+        elif value != before:  # a reading appeared or vanished, or the theme changed
             return True
     return False
 
