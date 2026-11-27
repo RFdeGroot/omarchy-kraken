@@ -388,11 +388,17 @@ def info_loop():
         if sensors is None:
             continue  # cooler asleep or unplugged; restore redraws it when it's back
         values = info_values(sensors)
+        if values == shown:
+            continue
+        # Theme switches are rare and should show at once, so they skip the rate
+        # limits (unless uploads are failing, to avoid retrying every poll).
+        theme_switch = shown is not None and values["accent"] != shown["accent"] and not failing
         since = time.monotonic() - last_upload
-        if values == shown or since < INFO_MIN_UPLOAD_SEC:
-            continue
-        if shown is not None and since < INFO_SMALL_CHANGE_SEC and not big_change(shown, values):
-            continue
+        if not theme_switch:
+            if since < INFO_MIN_UPLOAD_SEC:
+                continue
+            if shown is not None and since < INFO_SMALL_CHANGE_SEC and not big_change(shown, values):
+                continue
         last_upload = time.monotonic()
         try:
             if upload_info(values):
