@@ -86,10 +86,11 @@ The firmware can only draw liquid temperature itself, so **System info** is draw
 `krakenctl` and uploaded to the display as a one-frame GIF (about 13 KB; a static image would
 take 1.6 MB of the LCD's 24 MB, and liquidctl wipes the memory, flashing the liquid screen,
 once it fills up). The background service checks every 2 s and uploads only when a shown
-value changes: within 10 s for a change of 2 °C or more, and at most once a minute for 1 °C
-wobble. An upload takes under a second. Whether the
-cooler keeps uploads in RAM or flash isn't documented, which is why updates are kept sparse;
-the `INFO_*` constants in `bin/krakenctl` tune this.
+value changes: within 10 s for a change of 2 °C or more, every 5 minutes at most for 1 °C
+wobble, and within ~2 s for a theme switch. Updates are kept sparse because the display
+blinks briefly on every upload while it switches images, and because it isn't documented
+whether the cooler keeps uploads in RAM or flash. The `INFO_*` constants in `bin/krakenctl`
+tune this.
 
 `INFO_LAYOUT` picks the design: `gauge` (default) shows a large CPU temperature, `omarchy`
 draws the Omarchy logo mark with the CPU temperature inside, in the current theme's accent
