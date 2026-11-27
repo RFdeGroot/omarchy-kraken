@@ -11,8 +11,7 @@ An Omarchy bar widget for the NZXT Kraken 2023 Elite, built on
 - Fan icon in the bar. Click it for live liquid, CPU and GPU temperatures and fan speeds.
 - Cooling profiles: Silent, Auto, Performance.
 - Show live CPU, GPU and liquid temperatures on the cooler's display (the default), or the
-  firmware's own liquid-temperature screen. Static images still work from the command line;
-  GIFs don't on 2.x firmware.
+  firmware's own liquid-temperature screen. Static images and GIFs still work from the command line.
 - Saved settings are reapplied at login and after resume.
 
 ## Install
@@ -96,7 +95,7 @@ isn't documented, which is why updates are kept sparse.
 
 ## Notes
 
-- Static images are center-cropped to 640×640 and copied to `~/.local/state/omarchy-kraken-elite/images`,
+- Images are center-cropped to 640×640 and copied to `~/.local/state/omarchy-kraken-elite/images`,
   so restores keep working if the original file moves. GIFs can be up to 24 MB after resizing.
 - Settings are applied through liquidctl's `--direct-access`, because the kernel
   driver's hwmon files are only writable by root. Sensors are read from hwmon, except
