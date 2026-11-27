@@ -43,7 +43,7 @@ INFO_BIG_CHANGE = 2  # °C
 INFO_CANVAS = (640, 640)  # drawn at this size, then scaled to the cooler's LCD
 INFO_FONT = "JetBrainsMono Nerd Font"
 INFO_ARC_RANGE = (30, 90)  # CPU °C mapped onto the ring, empty to full
-INFO_LAYOUT = "gauge"  # "gauge" (big CPU number) or "omarchy" (Omarchy logo with CPU inside)
+INFO_LAYOUT = "omarchy"  # "gauge" (big CPU number) or "omarchy" (Omarchy logo with CPU inside)
 # The Omarchy logo mark (omarchy.org/brand) on its 15×15 grid.
 OMARCHY_MARK = (
     "###############",
