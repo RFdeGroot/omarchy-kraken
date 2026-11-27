@@ -7,13 +7,13 @@ import qs.Ui
 
 Panel {
   id: root
-  moduleName: "k61n.kraken"
-  ipcTarget: "k61n.kraken"
+  moduleName: "local.kraken-elite"
+  ipcTarget: "local.kraken-elite"
 
   readonly property string ctl: decodeURIComponent(Qt.resolvedUrl("bin/krakenctl").toString().replace("file://", ""))
 
   readonly property string fanIcon: String.fromCodePoint(0xF0210)         // md-fan
-  readonly property string imageIcon: String.fromCodePoint(0xF02E9)       // md-image
+  readonly property string infoIcon: String.fromCodePoint(0xF061A)        // md-chip
   readonly property string thermometerIcon: String.fromCodePoint(0xF050F) // md-thermometer
   readonly property var profileIcons: ({
     silent: String.fromCodePoint(0xF04B2),     // md-sleep
@@ -32,7 +32,7 @@ Panel {
   readonly property string activeProfile: pendingProfile !== "" ? pendingProfile : (status ? status.profile : "")
   readonly property var screen: status ? status.screen : ({ mode: "liquid" })
   readonly property bool busy: actionProc.running
-  readonly property int changeImageIndex: profiles.length
+  readonly property int infoIndex: profiles.length
   readonly property int liquidIndex: profiles.length + 1
 
   readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
@@ -73,10 +73,8 @@ Panel {
     run(["profile", id])
   }
 
-  // The file chooser takes over from here, so get the panel out of the way.
-  function pickImage() {
-    close()
-    run(["screen", "pick"])
+  function showInfo() {
+    run(["screen", "info"])
   }
 
   function showLiquid() {
@@ -85,7 +83,7 @@ Panel {
 
   function activateCursor() {
     if (cursorIndex < profiles.length) setProfile(profiles[cursorIndex].id)
-    else if (cursorIndex === changeImageIndex) pickImage()
+    else if (cursorIndex === infoIndex) showInfo()
     else if (cursorIndex === liquidIndex) showLiquid()
   }
 
@@ -95,10 +93,10 @@ Panel {
       return
     }
     var inProfiles = cursorIndex < profiles.length
-    if (dy > 0 && inProfiles) cursorIndex = changeImageIndex
+    if (dy > 0 && inProfiles) cursorIndex = infoIndex
     else if (dy < 0 && !inProfiles) cursorIndex = 0
     else if (dx !== 0) {
-      var first = inProfiles ? 0 : changeImageIndex
+      var first = inProfiles ? 0 : infoIndex
       var last = inProfiles ? profiles.length - 1 : liquidIndex
       cursorIndex = Math.max(first, Math.min(last, cursorIndex + dx))
     }
@@ -238,7 +236,7 @@ Panel {
 
         PanelHero {
           width: parent.width
-          title: "NZXT Kraken"
+          title: "NZXT Kraken Elite"
           meta: root.sensors ? "" : "Cooler not detected"
           foreground: root.foreground
           fontFamily: root.fontFamily
@@ -355,8 +353,10 @@ Panel {
 
             Text {
               anchors.centerIn: parent
-              visible: root.screen.mode === "liquid"
-              text: root.sensors ? root.sensors.liquid.toFixed(0) + "°" : root.thermometerIcon
+              visible: root.screen.mode === "liquid" || root.screen.mode === "info"
+              text: !root.sensors ? root.thermometerIcon
+                : root.screen.mode === "info" && root.sensors.cpu !== null ? root.sensors.cpu.toFixed(0) + "°"
+                : root.sensors.liquid.toFixed(0) + "°"
               color: "white"
               font.family: root.fontFamily
               font.pixelSize: Style.font.display
@@ -390,6 +390,7 @@ Panel {
               width: parent.width
               text: root.busy ? "Working…"
                 : root.screen.mode === "liquid" ? "Liquid temperature"
+                : root.screen.mode === "info" ? "CPU, GPU and liquid"
                 : String(root.screen.source || "").split("/").pop()
               textFormat: Text.PlainText
               elide: Text.ElideMiddle
@@ -400,21 +401,22 @@ Panel {
 
             Button {
               width: parent.width
-              iconText: root.imageIcon
-              text: "Change image"
+              iconText: root.infoIcon
+              text: "System info"
               fontSize: Style.font.bodySmall
               foreground: root.foreground
               fontFamily: root.fontFamily
               bordered: true
-              hasCursor: root.cursorActive && root.cursorIndex === root.changeImageIndex
-              onClicked: root.pickImage()
-              onHovered: function(h) { root.hover(root.changeImageIndex, h) }
+              active: root.screen.mode === "info"
+              hasCursor: root.cursorActive && root.cursorIndex === root.infoIndex
+              onClicked: root.showInfo()
+              onHovered: function(h) { root.hover(root.infoIndex, h) }
             }
 
             Button {
               width: parent.width
               iconText: root.thermometerIcon
-              text: "Show temperature"
+              text: "Liquid only"
               fontSize: Style.font.bodySmall
               foreground: root.foreground
               fontFamily: root.fontFamily
